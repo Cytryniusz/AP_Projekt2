@@ -1,2 +1,10 @@
 geopandas
 requests
+pathlib
+osmnx
+networkx
+numpy
+pandas
+shapely
+scipy
+tqdm
