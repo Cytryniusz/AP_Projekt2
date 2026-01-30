@@ -213,7 +213,31 @@ def calculate_score(row_node, max_minutes, scenario="basic"):
 
     return score
 
-def calculate_cannibalization(n):
+def calculate_score_detailed(row_node, max_minutes, scenario="basic"):
+    """Zwraca słownik z punktami z każdej wagi osobno"""
+    max_seconds = max_minutes * 60
+    details = {}
+
+    for gen_name, access_map in generator_access_maps.items():
+        dist = access_map.get(row_node, np.inf)
+        if dist <= max_seconds:
+            details[gen_name] = WEIGHTS[gen_name]
+        else:
+            details[gen_name] = 0
+
+    # Bonus za konkurencję
+    details["competition_bonus"] = 0
+    if scenario == "competition" and comp_dists:
+        total = sum(details.values())
+        if total > 0:
+            min_dist = comp_dists.get(row_node, np.inf)
+            if min_dist <= COMPETITION_RANGE:
+                details["competition_bonus"] = COMPETITION_BONUS
+
+    details["total"] = sum(details.values())
+    return details
+
+def cannibalization(n):
     if not inpost_dists:
         return np.inf
     return inpost_dists.get(n, np.inf)
@@ -229,7 +253,7 @@ print("\n▶ ROZPOCZYNAM GŁÓWNE OBLICZENIA...")
 
 print("   Krok 0/5: Weryfikacja kanibalizacji...")
 candidates["dist_to_own"] = [
-    calculate_cannibalization(n) 
+    cannibalization(n)
     for n in tqdm(candidates["node"], desc="Kanibalizacja")
 ]
 
@@ -297,12 +321,42 @@ results = {
 pathlib.Path("results").mkdir(exist_ok=True)
 valid_candidates.drop(columns=["node"]).to_file("results/all_candidates_scored.gpkg", driver="GPKG")
 
+# Mapowanie scenariuszy do parametrów
+scenario_params = {
+    "scenariusz1_3min": (3, "basic"),
+    "scenariusz1_8min": (8, "basic"),
+    "scenariusz2_3min": (3, "competition"),
+    "scenariusz2_8min": (8, "competition"),
+}
+
 for name, gdf in results.items():
     if not gdf.empty:
         gdf.to_file(f"results/best_{name}.gpkg", driver="GPKG")
+        print(f"\n{'='*60}")
         print(f"✔ Zapisano: results/best_{name}.gpkg")
+        print(f"{'='*60}")
         print(f"--- {name} ---")
+        print(f"\nPodsumowanie punktów:")
         print(gdf[["score_s1_3m", "score_s1_8m", "score_s2_3m", "score_s2_8m"]].to_string())
+
+        # Szczegółowy rozkład punktów z wag
+        max_min, scenario_type = scenario_params[name]
+        print(f"\n📊 SZCZEGÓŁOWY ROZKŁAD PUNKTÓW (wagi: {max_min} min, typ: {scenario_type}):")
+        print("-" * 60)
+
+        for idx, row in gdf.iterrows():
+            details = calculate_score_detailed(row["node"], max_min, scenario_type)
+            print(f"\n🏁 Lokalizacja {idx + 1}:")
+            print(f"   Współrzędne: ({row.geometry.centroid.x:.1f}, {row.geometry.centroid.y:.1f})")
+            print(f"   Rozkład punktów z wag:")
+            for weight_name, points in details.items():
+                if weight_name != "total":
+                    weight_val = WEIGHTS.get(weight_name, COMPETITION_BONUS if weight_name == "competition_bonus" else 0)
+                    status = "✓" if points > 0 else "✗"
+                    print(f"      {status} {weight_name:20s}: {points:2d} pkt (waga: {weight_val})")
+            print(f"   {'─'*40}")
+            print(f"   SUMA: {details['total']} pkt")
         print("")
 
+print("\n" + "="*60)
 print("Zakończono!")
